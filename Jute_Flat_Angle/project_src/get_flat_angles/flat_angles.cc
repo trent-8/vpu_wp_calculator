@@ -26,8 +26,8 @@ using namespace ifm3d::literals;
 #define OUTPUT_ASSEMBLY_NUM 102 // 0x066
 #define CONFIG_ASSEMBLY_NUM 151 // 0x097
 
-int32_t camera_status = 0;                      // status bits for all four cameras
-int32_t message_count = 0;                      // number of ethernet/ip messages sent
+uint16_t camera_status = 0;                   // status bits for all four cameras
+uint16_t message_count = 0;                   // number of ethernet/ip messages sent
 float heights[4] = {0,0,0,0};                 // heights of the four corners of the flat
 uint8_t g_assembly_data065[(sizeof(camera_status) + sizeof(message_count) + sizeof(heights))]; // input byte array
 uint8_t g_assembly_data066[sizeof(int32_t)]; // output byte array
@@ -193,6 +193,7 @@ EipStatus AfterAssemblyDataReceived(AssemblyInstance *aInstance, OpMode aMode,
 }
 
 bool BeforeAssemblyDataSend(AssemblyInstance *instance) {
+  message_count++;
   if (camera_frame_times.empty())
   {
     for (int i = 0; i<4; i++) {
@@ -202,10 +203,13 @@ bool BeforeAssemblyDataSend(AssemblyInstance *instance) {
   for (int i = 0; i<4; i++) {
     auto current_time = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = current_time - camera_frame_times[i];
+    camera_status = 0;
+    camera_status ^= (elapsed_seconds > 200ms) << i;
   }
   if (instance->Id() == INPUT_ASSEMBLY_NUM) {
-    memcpy(g_assembly_data065, &camera_status, sizeof(camera_status));
-    memcpy(g_assembly_data065 + sizeof(int32_t), heights, sizeof(heights));
+    memcpy(g_assembly_data065, &message_count, sizeof(message_count));
+    memcpy(g_assembly_data065 + sizeof(message_count), &camera_status, sizeof(camera_status));
+    memcpy(g_assembly_data065 + sizeof(uint32_t), heights, sizeof(heights));
   }
   return true;
 }
