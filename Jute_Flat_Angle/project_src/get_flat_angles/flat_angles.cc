@@ -43,20 +43,6 @@ bool comparePointZ(const point3d &a, const point3d &b) {
   return a.z > b.z;
 }
 
-std::string formatTimestamp(ifm3d::TimePointT timestamp) {
-  using namespace std::chrono;
-  std::time_t time = std::chrono::system_clock::to_time_t(
-      std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-          timestamp));
-  milliseconds milli = duration_cast<milliseconds>(
-      timestamp.time_since_epoch() -
-      duration_cast<seconds>(timestamp.time_since_epoch()));
-  std::ostringstream s;
-  s << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S") << ":"
-    << std::setw(3) << std::setfill('0') << milli.count();
-  return s.str();
-}
-
 /**
  * captures camera frames
  */
