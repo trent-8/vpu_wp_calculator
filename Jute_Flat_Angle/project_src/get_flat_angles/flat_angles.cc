@@ -3,6 +3,7 @@
  * All rights reserved.
  *
  ******************************************************************************/
+#include "diagnostic.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cipster_api.h>
@@ -18,6 +19,7 @@
 #include <memory>
 #include <stdlib.h>
 #include <string.h>
+#include <thread>
 
 using namespace std::chrono_literals;
 using namespace ifm3d::literals;
@@ -26,16 +28,17 @@ using namespace ifm3d::literals;
 #define OUTPUT_ASSEMBLY_NUM 102 // 0x066
 #define CONFIG_ASSEMBLY_NUM 151 // 0x097
 
-uint16_t camera_status = 0;                   // status bits for all four cameras
+uint16_t vpu_status = 0;                   // status bits for all four cameras
 uint16_t message_count = 0;                   // number of ethernet/ip messages sent
 float heights[4] = {0,0,0,0};                 // heights of the four corners of the flat
-uint8_t g_assembly_data065[(sizeof(camera_status) + sizeof(message_count) + sizeof(heights))]; // input byte array
+uint8_t g_assembly_data065[(sizeof(vpu_status) + sizeof(message_count) + sizeof(heights))]; // input byte array
 uint8_t g_assembly_data066[sizeof(int32_t)]; // output byte array
 uint8_t g_assembly_data097[0];                  // Config
 std::vector<std::chrono::_V2::system_clock::time_point> camera_frame_times;     // stores the last frame times of the 4 cameras
 
 std::shared_ptr<ifm3d::O3R> vpu;           // IFM 3D camera
 ifm3d::FrameGrabber::Ptr fgs[4]; // frame grabbers
+std::shared_ptr<O3RDiagnostic> diagnostic;
 
 struct point3d{ float x, y, z; };
 
@@ -121,10 +124,27 @@ void (*getCameraHeight[])(ifm3d::Frame::Ptr frame) = {
   getCamera3Height
 };
 
+void DiagnosticsThreadCallable() {
+  diagnostic.get()->StartAsyncDiagnostics();
+  try {
+    while (true) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  } catch (...) {
+    diagnostic.get()->StopAsyncDiagnostics();
+    std::cout << "Stopping diagnostic monitoring.\n";
+  }
+}
+
 EipStatus ApplicationInitialization(char *ipAddressCamera) {
   EipStatus status = kEipStatusOk;
   std::cout << "assigning VPU object...\n";
   vpu = std::make_shared<ifm3d::O3R>(std::string(ipAddressCamera));
+  std::cout << "assigning diagnostic object...\n";
+  diagnostic = std::make_shared<O3RDiagnostic>(vpu, &vpu_status);
+  std::cout << "starting diagnostics thread...\n";
+  std::thread diagnosticsThread(DiagnosticsThreadCallable);
+  diagnosticsThread.detach();
   std::cout << "retrieving configuration...\n";
   ifm3d::json conf = vpu->Get();
   std::cout << "starting framegrabbers for the first 4 ports...\n";
@@ -200,15 +220,15 @@ bool BeforeAssemblyDataSend(AssemblyInstance *instance) {
       camera_frame_times.push_back(std::chrono::system_clock::now());
     }
   }
+  vpu_status &= (uint16_t)1; // reset bits except first bit
   for (int i = 0; i<4; i++) {
     auto current_time = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = current_time - camera_frame_times[i];
-    camera_status = 0;
-    camera_status ^= (elapsed_seconds > 200ms) << i;
+    vpu_status |= (uint16_t)(elapsed_seconds > 300ms) << (i + 1); // reset bit if frame too old
   }
   if (instance->Id() == INPUT_ASSEMBLY_NUM) {
     memcpy(g_assembly_data065, &message_count, sizeof(message_count));
-    memcpy(g_assembly_data065 + sizeof(message_count), &camera_status, sizeof(camera_status));
+    memcpy(g_assembly_data065 + sizeof(message_count), &vpu_status, sizeof(vpu_status));
     memcpy(g_assembly_data065 + sizeof(uint32_t), heights, sizeof(heights));
   }
   return true;
